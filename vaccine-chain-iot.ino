@@ -1,90 +1,102 @@
 #include <DHT.h>
 #include <DHT_U.h>
 #include <WiFi.h>
-#include <WebServer.h>
+#include <HTTPClient.h>
+#include <ArduinoJson.h>
+#include <WiFiUdp.h>
+#include <NTPClient.h>
 
-#define DHTPIN 22      // Chân GPIO 16
-#define DHTTYPE DHT11  // Loại cảm biến DHT11
-
+#define DHTPIN 22      // GPIO pin 22
+#define DHTTYPE DHT11  // DHT11 sensor type
 
 DHT dht(DHTPIN, DHTTYPE);
 
-const char* ssid = "Pi Kafe 1";
-const char* password = "79797979";
-const char* host = "192.168.9.209";
-const int port = 3000;
+const char* ssid = "Greenwich-Guest";
+const char* password = "greenwichvn@123";
+const char* serverName = "https://b513-118-69-133-161.ngrok-free.app/api/Dht11";  // Replace with your server's IP and port
+String deviceId = "DEV0" + String(DHTPIN);
+String vaccineId = "VAC002";
+
 WiFiClient client;
 
+// NTP setup
+WiFiUDP udp;
+NTPClient timeClient(udp, "pool.ntp.org", 0, 3600);  // Offset in seconds (3600 = UTC+1)
+
 void setup() {
-  // put your setup code here, to run once:
   Serial.begin(9600);
   WiFi.begin(ssid, password);
 
   while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
+    delay(3000);
     Serial.println("Connecting to WiFi...");
   }
 
   Serial.println("");
   Serial.println("Connected to the WiFi network");
-  Serial.print("ESP32's IP adress is: ");
+  Serial.print("ESP32's IP address is: ");
   Serial.println(WiFi.localIP());
 
   dht.begin();
+
+  // Start the NTPClient to get time
+  timeClient.begin();
 }
 
 void loop() {
-  // put your main code here, to run repeatedly:
-  int temp = dht.readTemperature();
-  int humid = dht.readHumidity();
-  
-  if (!client.connect(host, port)) {
-    Serial.println("Lỗi kết nối đến webserver!!!");
+  // Update the time
+  timeClient.update();
+
+  // Get the current time
+  String formattedTime = timeClient.getFormattedTime();
+  Serial.print("Current Time: ");
+  Serial.println(formattedTime);
+
+  float temp = dht.readTemperature();
+  if (isnan(temp)) {
+    Serial.println("Failed to read from DHT sensor!");
     return;
   }
+  Serial.println("");
+  Serial.print("Vaccine ID: ");
+  Serial.println(vaccineId);
 
-  //GET METHODS ==================================
+  Serial.print("Device ID: ");
+  Serial.println(deviceId);
 
-  // String receiver = "/dht11";
-  // receiver += "?temperature=";
-  // receiver += temp;
-  // receiver += "&humidity=";
-  // receiver += humid;
+  Serial.print("Temperature: ");
+  Serial.println(temp);
 
-  // Serial.print("Receiver: ");
-  // Serial.println(receiver);
+  // Send POST request
+  if (WiFi.status() == WL_CONNECTED) {
+    HTTPClient http;
 
-  // //Tạo biến chứa yêu cầu kết nối đến với máy chủ
-  // String request = "GET " + receiver + " HTTP/1.1\r\n";
-  // request += String("Host: ") + host + "\r\n";
-  // request += "Connection: close\r\n\r\n";
+    // Start connection to the server
+    http.begin(serverName);
 
-  // client.print(request);
-  // Serial.println();
-  // Serial.println("====>Dong ket noi!!!!");
-  // delay(3000);
+    // Set method and headers
+    http.addHeader("Content-Type", "application/json");
 
+    // Create JSON data to send
+    String jsonData = "{"
+                      "\"deviceId\": \"" + deviceId + "\", "
+                      "\"vaccineId\": \"" + vaccineId + "\", "
+                      "\"value\": " + String(temp) + "}";
 
-  //POST METHODS ==================================
-  String receiver = "/dht11";
-  receiver += "?temperature=";
-  receiver += temp;
-  receiver += "&humidity=";
-  receiver += humid;
+    // Send POST request
+    int httpResponseCode = http.POST(jsonData);
 
-  Serial.print("Receiver: ");
-  Serial.println(receiver);
+    // Process server response
+    if (httpResponseCode > 0) {
+      String response = http.getString();
+      Serial.println("Response: " + response);
+    } else {
+      Serial.print("Error on sending POST: ");
+      Serial.println(httpResponseCode);
+    }
 
-  // Tạo biến chứa yêu cầu kết nối đến với máy chủ
-  String request = "POST " + receiver + " HTTP/1.1\r\n";
-  request += "Host: " + String(host) + "\r\n";
-  request += "Content-Type: application/x-www-form-urlencoded\r\n";
-  request += "Content-Length: " + String(receiver.length()) + "\r\n";
-  request += "Connection: close\r\n\r\n";
-  request += receiver;
+    http.end();
+  }
 
-  client.print(request);
-  Serial.println();
-  Serial.println("====>Đã kết nối!!!!");
   delay(3000);
 }
